@@ -1,0 +1,6 @@
+{
+  "name": "Smart Kids Learning Companion",
+  "description": "AI-powered interactive voice learning companion for kids, with age-adapted lessons, custom stories, gamification, and a parent dashboard.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
