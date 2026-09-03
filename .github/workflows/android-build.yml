@@ -33,7 +33,7 @@ jobs:
             if [ -f ".env.example" ]; then
               cp .env.example .env
             else
-              touch .env
+              echo "GEMINI_API_KEY=MY_GEMINI_API_KEY" > .env
             fi
           fi
 
@@ -50,6 +50,7 @@ jobs:
             gradle wrapper
           fi
           chmod +x gradlew
+          chmod +x ./gradle/wrapper/* 2>/dev/null || true
 
       - name: Build Debug APK
         run: ./gradlew assembleDebug --stacktrace
