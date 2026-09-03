@@ -64,6 +64,22 @@ class LearningRepository(
         addXp(xpReward)
     }
 
+    suspend fun unlockBadge(title: String, description: String, iconName: String): Boolean = withContext(Dispatchers.IO) {
+        val existing = badgeDao.getBadgeByTitle(title)
+        if (existing == null) {
+            badgeDao.insertBadge(
+                Badge(
+                    title = title,
+                    description = description,
+                    iconName = iconName
+                )
+            )
+            true
+        } else {
+            false
+        }
+    }
+
     suspend fun addChatMessage(sender: String, text: String, isVoice: Boolean = false) = withContext(Dispatchers.IO) {
         messageDao.insertMessage(ChatMessage(sender = sender, text = text, isVoice = isVoice))
     }
@@ -121,28 +137,50 @@ class LearningRepository(
     }
 
     /**
-     * Call the Gemini API directly for kid conversation with dynamic parenting safety system instructions.
+     * Call the Gemini API directly for child companion conversation with multi-turn memory and safety instructions.
      */
-    suspend fun getAIResponse(userMessage: String, category: String = "General"): String = withContext(Dispatchers.IO) {
+    suspend fun getAIResponse(
+        userMessage: String,
+        category: String = "General",
+        companionPersonaId: String = "puppy"
+    ): String = withContext(Dispatchers.IO) {
         val profile = profileDao.getProfile() ?: ChildProfile(name = "Friend", age = 6, interests = "Stories")
         val apiKey = BuildConfig.GEMINI_API_KEY
 
-        val systemPrompt = getSystemInstructionForAge(profile, category)
+        val systemPrompt = getSystemInstructionForCompanion(profile, category, companionPersonaId)
+
+        // Retrieve recent messages for multi-turn conversation memory
+        val recentMessages = try {
+            messageDao.getRecentMessages(8).reversed()
+        } catch (e: Exception) {
+            emptyList()
+        }
 
         if (apiKey.isEmpty() || apiKey == "MY_GEMINI_API_KEY") {
-            return@withContext getLocalFallbackResponse(userMessage, profile, category)
+            return@withContext getLocalFallbackResponse(userMessage, profile, companionPersonaId, recentMessages)
         }
 
         try {
+            val contentsList = mutableListOf<Content>()
+
+            // Append historical turns so Gemini understands conversational flow
+            for (msg in recentMessages) {
+                val role = if (msg.sender == "USER") "user" else "model"
+                contentsList.add(Content(role = role, parts = listOf(Part(text = msg.text))))
+            }
+
+            // Append current user message
+            contentsList.add(Content(role = "user", parts = listOf(Part(text = userMessage))))
+
             val request = GenerateContentRequest(
-                contents = listOf(Content(parts = listOf(Part(text = userMessage)))),
+                contents = contentsList,
                 systemInstruction = Content(parts = listOf(Part(text = systemPrompt)))
             )
             val response = RetrofitClient.service.generateContent(apiKey, request)
             response.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text
-                ?: "I am listening to you, my friend! Let's talk about something exciting."
+                ?: getLocalFallbackResponse(userMessage, profile, companionPersonaId, recentMessages)
         } catch (e: Exception) {
-            getLocalFallbackResponse(userMessage, profile, category)
+            getLocalFallbackResponse(userMessage, profile, companionPersonaId, recentMessages)
         }
     }
 
@@ -280,69 +318,132 @@ class LearningRepository(
         }
     }
 
-    private fun getSystemInstructionForAge(profile: ChildProfile, category: String): String {
-        return when {
-            profile.age <= 5 -> """
-                You are a super sweet, warm, animated cartoon puppy-teacher named 'Buddy' for preschool children (ages 3-5).
-                Use very simple, short sentences (maximum 8 words). Speak slowly, with high energy and pure cheerfulness.
-                Introduce happy sound effects like '*Woof-Woof!*', '*Happy Bounce!*', or '*Sparkle!*' at the start of sentences.
-                Explain things by color, shapes, and friendly animal characters.
-                Focus on fundamental manners: sharing, saying thank you, washing hands, and being nice to friends.
-                Current Topic / Context: $category. Always encourage the child and give them a big visual high-five!
-            """.trimIndent()
-
-            profile.age <= 8 -> """
-                You are 'Captain Curie', a fun, enthusiastic science and story explorer buddy for primary school children (ages 6-8).
-                Keep sentences clear, playful, and action-oriented. Use simple, exciting real-world analogies (e.g., 'Gravity is like invisible tape!').
-                Praise effort and answer questions with great curiosity: 'Wow, what an incredible question!' or 'You're thinking like a scientist!'.
-                Focus on: Math games, amazing nature and science, basic geography (exploring mountains and oceans), sharing, and understanding empathy.
-                Current Topic / Context: $category. Keep the conversation extremely natural and hold a friendly dialogues instead of standard boring quizzes.
-            """.trimIndent()
-
-            profile.age <= 11 -> """
-                You are 'Professor Spark', a friendly, encouraging mentor and co-explorer for intermediate school kids (ages 9-11).
-                Speak naturally, like an inspiring, highly knowledgeable camp counselor.
-                Incorporate interesting trivia, brainteasers, and critical thinking questions (e.g., 'What would happen if we didn't have plants on Earth?').
-                Encourage self-reflection and emotional confidence. Ask for their opinion: 'What do you think about that?' or 'How would you solve this challenge?'.
-                Current Topic / Context: $category. Explain things logically with clear, simple facts.
-            """.trimIndent()
-
-            else -> """
-                You are 'Atlas', a cool, modern, highly supportive coach and academic tutor for teens/advanced children (ages 12-14).
-                Speak like an intellectual older sibling or mentor. Keep it authentic, engaging, and respectful of their growing maturity.
-                Provide deeply interesting context, logical brainteasers, and real-life problem solving.
-                Prompt them to think about leadership, responsibility, science ethics, history, and advanced communication confidence.
-                Current Topic / Context: $category. Keep content sophisticated yet extremely accessible, friendly, and completely child-safe.
-            """.trimIndent()
+    private fun getSystemInstructionForCompanion(
+        profile: ChildProfile,
+        category: String,
+        personaId: String
+    ): String {
+        val personaIdentity = when (personaId) {
+            "astronaut" -> "You are 'Captain Curie', an enthusiastic cosmic spaceship explorer and learning partner who loves space, science, and curiosity."
+            "fox" -> "You are 'Spark the Fox', a clever, energetic, and playful learning companion who loves riddles, nature, and puzzles."
+            "owl" -> "You are 'Luna the Star Owl', a gentle, wise, and soothing companion who loves fascinating facts, reading, and thoughtful questions."
+            else -> "You are 'Buddy the Puppy', a super cheerful, affectionate, and playful puppy learning companion who loves making learning fun and rewarding."
         }
+
+        return """
+            $personaIdentity
+            You are talking live with a child named "${profile.name}", age ${profile.age} (interests: "${profile.interests}").
+            
+            CRITICAL GOALS:
+            1. You are a living animated companion and learning partner, NOT a cold chatbot. Speak directly, warmly, and enthusiastically to ${profile.name}.
+            2. Greet the child warmly when starting or meeting.
+            3. Ask the child questions to spark curiosity and test understanding.
+            4. Listen to and understand what the child says.
+            5. Respond intelligently and dynamically to their exact input.
+            6. Ask follow-up questions to keep the conversation flowing naturally.
+            7. Explain concepts in a simple, child-friendly way using everyday examples and analogies appropriate for age ${profile.age}.
+            8. GIVE HINTS: If the child says "I don't know", asks for a hint, or seems stuck, give a fun, gentle clue without immediately spoiling the answer.
+            9. GENTLY CORRECT MISTAKES: Never say "No", "Wrong", or "That's incorrect". Always validate their effort first! Example:
+               Child: "Elephant."
+               Companion: "Good try! Elephants are the biggest land animals. But the biggest animal on Earth is actually the blue whale! 🐋 Want to learn something interesting about it?"
+            10. ENCOURAGE & CELEBRATE: When the child gets something right or shares a great thought, praise them enthusiastically!
+            11. VISUAL EXPRESSIONS: Start your response with exactly one of these visual emotion tags:
+                [MOOD: HAPPY] - for cheerful greetings, general chatting, or happy remarks.
+                [MOOD: CURIOUS] - when asking a question or pondering an interesting puzzle.
+                [MOOD: THINKING] - when calculating, reflecting, or searching memory.
+                [MOOD: ENCOURAGING] - when giving a gentle hint, soft correction, or comforting words.
+                [MOOD: CELEBRATING] - when the child gets an answer right or reaches a breakthrough!
+                [MOOD: TALKING] - when explaining a fascinating fact.
+
+            CHILD SAFETY & CONTENT BOUNDARIES:
+            - Strictly child-safe at all times. Zero profanity, violence, scary themes, adult topics, or negative self-talk.
+            - Never ask for or store private personal information (home address, phone number, passwords, school address). If the child offers this, gently redirect: "Let's keep your private details safe! What fun topic shall we explore next?"
+            - Keep each response concise (2 to 4 friendly sentences) so it fits in a conversation bubble and can be easily spoken aloud with text-to-speech.
+        """.trimIndent()
     }
 
     // --- LOCAL FALLBACK ENGINE FOR OFFLINE / CRASH-PROOF PERFORMANCE ---
 
-    private fun getLocalFallbackResponse(userMessage: String, profile: ChildProfile, category: String): String {
-        val lower = userMessage.lowercase()
-        return when {
-            profile.age <= 5 -> {
-                if (lower.contains("hello") || lower.contains("hi")) {
-                    "Hello ${profile.name}! *Woof!* I'm Buddy, your happy learning companion! 🐶 Are you ready to play and learn today?"
-                } else if (lower.contains("math") || lower.contains("count")) {
-                    "Yippee! Let's count! Can you count 1, 2, 3 stars in the sky? 🌟 You are doing so great, *Sparkle!*"
-                } else {
-                    "That is so wonderful, ${profile.name}! *Happy Bounce!* Buddy loves learning with you. Tell me, what's your favorite animal? 🦁"
-                }
+    private fun getLocalFallbackResponse(
+        userMessage: String,
+        profile: ChildProfile,
+        personaId: String,
+        recentMessages: List<ChatMessage> = emptyList()
+    ): String {
+        val lower = userMessage.trim().lowercase()
+
+        // 1. Child Safety Redirection
+        if (lower.contains("password") || lower.contains("phone") || lower.contains("address") || lower.contains("where do you live")) {
+            return "[MOOD: ENCOURAGING] Remember ${profile.name}, we always keep our private details safe! Let's explore something fun instead—what's your favorite animal or superpower?"
+        }
+
+        // 2. Greetings
+        if (lower.matches(Regex(".*\\b(hi|hello|hey|greetings|good morning|good afternoon)\\b.*"))) {
+            return when (personaId) {
+                "astronaut" -> "[MOOD: HAPPY] Greetings, Space Cadet ${profile.name}! 🚀 Captain Curie here! What stellar topic are we exploring today?"
+                "fox" -> "[MOOD: HAPPY] Hi ${profile.name}! 🦊 Spark here! I'm ready to solve some super fun riddles with you. What are you learning today?"
+                "owl" -> "[MOOD: HAPPY] Hoo-hoo! Hello dear ${profile.name}! 🦉 Luna is here to learn with you. What wonder of the world shall we discover?"
+                else -> "[MOOD: HAPPY] Hi ${profile.name}! 👋 Woof! I'm Buddy, your learning buddy! What fun thing are you learning today?"
             }
-            profile.age <= 8 -> {
-                if (lower.contains("hello") || lower.contains("hi")) {
-                    "Hey there, Explorer ${profile.name}! Captain Curie here! 🚀 What amazing thing should we explore today? Science, math, or a cool story?"
-                } else if (lower.contains("why")) {
-                    "Wow, that's a stellar question! You're thinking like a true scientist! Did you know that things fall down because of gravity, which acts like a giant invisible magnet? Isn't that awesome?"
-                } else {
-                    "High-five, ${profile.name}! That's really cool. Let's practice some math or tell a story together. What do you think?"
-                }
-            }
-            else -> {
-                "Hello ${profile.name}! I'm Atlas, your learning companion. It's great to connect. Whether you want to solve some logic puzzles, learn about geography, practice English, or just talk about your day, I'm here to support you. What's on your mind?"
-            }
+        }
+
+        // 3. Animal topic starter
+        if (lower.contains("animal") || lower.contains("animals") || lower.contains("zoo")) {
+            return "[MOOD: CURIOUS] Awesome! 🐘 Can you tell me which animal is the biggest animal on Earth?"
+        }
+
+        // 4. Animal answer: Elephant (from user prompt example)
+        if (lower.contains("elephant")) {
+            return "[MOOD: ENCOURAGING] Good try! Elephants are the biggest land animals. But the biggest animal on Earth is actually the blue whale! 🐋 Want to learn something interesting about it?"
+        }
+
+        // 5. Whale reaction
+        if (lower.contains("whale") || lower.contains("blue whale")) {
+            return "[MOOD: CELEBRATING] You got it! 🐋 A blue whale's tongue weighs as much as an entire elephant, and its heart is the size of a small car! Isn't nature amazing?"
+        }
+
+        // 6. Hints requested
+        if (lower.contains("hint") || lower.contains("clue") || lower.contains("i don't know") || lower.contains("dont know") || lower.contains("help")) {
+            return "[MOOD: CURIOUS] Here's a clue! 💡 Think about creatures that swim in the deep blue ocean! It breathes through a blowhole at the top of its head. Want to guess now?"
+        }
+
+        // 7. Math & Numbers
+        if (lower.contains("math") || lower.contains("count") || lower.contains("calculate")) {
+            return "[MOOD: CURIOUS] Let's try a fun math puzzle! 🔢 If you have 3 magic stars 🌟 and you find 2 more in the galaxy, how many stars do you have in all?"
+        }
+        if (lower == "5" || lower == "five") {
+            return "[MOOD: CELEBRATING] High five! ✋ That is 5 stars! You solved it so fast, ${profile.name}! You have true math superpowers!"
+        }
+
+        // 8. Jokes
+        if (lower.contains("joke") || lower.contains("funny")) {
+            return "[MOOD: HAPPY] Why did the dinosaur cross the road? Because chickens didn't exist yet! 🦖 😂 Did that make you giggle?"
+        }
+
+        // 9. Riddles
+        if (lower.contains("riddle")) {
+            return "[MOOD: CURIOUS] Riddle time! 🧩 What has hands, but cannot clap? Take your time and think!"
+        }
+        if (lower.contains("clock") || lower.contains("watch")) {
+            return "[MOOD: CELEBRATING] Hooray! You got it right! 🎉 A clock! You're a super detective!"
+        }
+
+        // 10. Space / Stars
+        if (lower.contains("space") || lower.contains("planet") || lower.contains("star") || lower.contains("moon")) {
+            return "[MOOD: TALKING] 🚀 Did you know that footprints on the Moon will stay there for millions of years because there is no wind to blow them away? What planet would you love to visit?"
+        }
+
+        // 11. Why questions
+        if (lower.startsWith("why") || lower.contains("why is") || lower.contains("how does")) {
+            return "[MOOD: THINKING] What an inquisitive thinker you are, ${profile.name}! When we look closely at things, everything has a cool scientific reason. Would you like me to explain step-by-step?"
+        }
+
+        // Default natural conversational companion response
+        return when (personaId) {
+            "astronaut" -> "[MOOD: HAPPY] That is an extraordinary observation, Explorer ${profile.name}! 🚀 Tell me more about that, or ask me anything you want to explore!"
+            "fox" -> "[MOOD: HAPPY] You're so clever, ${profile.name}! 🦊 That sparks my curiosity! What else should we investigate together?"
+            "owl" -> "[MOOD: HAPPY] How wonderful, dear ${profile.name}! 🦉 Every conversation teaches us something new. What would you like to know next?"
+            else -> "[MOOD: HAPPY] That sounds so cool, ${profile.name}! 🐶 Buddy loves learning with you! What's your next big idea?"
         }
     }
 

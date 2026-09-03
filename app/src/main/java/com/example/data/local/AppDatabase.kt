@@ -51,6 +51,9 @@ interface ChatMessageDao {
     @Query("SELECT * FROM chat_message ORDER BY timestamp ASC")
     fun getAllMessagesFlow(): Flow<List<ChatMessage>>
 
+    @Query("SELECT * FROM chat_message ORDER BY timestamp DESC LIMIT :limit")
+    suspend fun getRecentMessages(limit: Int = 10): List<ChatMessage>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertMessage(message: ChatMessage)
 
@@ -77,6 +80,9 @@ interface DailyMissionDao {
 interface BadgeDao {
     @Query("SELECT * FROM badge")
     fun getAllBadgesFlow(): Flow<List<Badge>>
+
+    @Query("SELECT * FROM badge WHERE title = :title LIMIT 1")
+    suspend fun getBadgeByTitle(title: String): Badge?
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertBadge(badge: Badge)

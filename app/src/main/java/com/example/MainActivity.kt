@@ -41,7 +41,7 @@ class MainActivity : ComponentActivity() {
             AppDatabase::class.java,
             "smart_kids_companion.db"
         )
-        .fallbackToDestructiveMigration()
+        .fallbackToDestructiveMigration(dropAllTables = true)
         .build()
 
         // Create the companion ViewModel

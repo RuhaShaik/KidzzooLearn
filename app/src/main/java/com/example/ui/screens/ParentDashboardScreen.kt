@@ -60,6 +60,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.model.ChildProfile
 import com.example.data.model.LearningProgress
+import com.example.ui.components.ConfettiCelebrationOverlay
+import com.example.ui.components.ProgressDashboard
 import com.example.ui.theme.*
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
@@ -76,6 +78,7 @@ fun ParentDashboardScreen(
     val isReportLoading by viewModel.isReportLoading.collectAsState()
 
     val localProfile = profile ?: ChildProfile(name = "Your Child", age = 6, interests = "Stories")
+    val celebrationEvent by viewModel.celebrationEvent.collectAsState()
 
     var isBedtimeLockActive by remember { mutableStateOf(false) }
     var screenTimeLimit by remember { mutableStateOf(localProfile.screenTimeLimitMinutes.toFloat()) }
@@ -85,7 +88,8 @@ fun ParentDashboardScreen(
         viewModel.loadParentReport()
     }
 
-    Scaffold(
+    Box(modifier = Modifier.fillMaxSize()) {
+        Scaffold(
         topBar = {
             TopAppBar(
                 title = {
@@ -115,6 +119,9 @@ fun ParentDashboardScreen(
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
+            // Weekly Learning Milestones & Completion Rates (Recharts)
+            ProgressDashboard(childName = localProfile.name)
+
             // Screen Time & Interactive Locks Card
             Card(
                 shape = RoundedCornerShape(24.dp),
@@ -350,4 +357,15 @@ fun ParentDashboardScreen(
             }
         }
     }
+
+    celebrationEvent?.let { event ->
+        ConfettiCelebrationOverlay(
+            visible = true,
+            title = event.title,
+            message = event.message,
+            xpBonus = event.xpBonus,
+            onDismiss = { viewModel.dismissCelebration() }
+        )
+    }
+}
 }

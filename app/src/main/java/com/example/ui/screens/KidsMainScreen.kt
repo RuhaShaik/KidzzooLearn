@@ -27,20 +27,20 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.automirrored.filled.VolumeOff
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Casino
 import androidx.compose.material.icons.filled.ChatBubble
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.EmojiEvents
 import androidx.compose.material.icons.filled.Keyboard
-import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
-import androidx.compose.material.icons.filled.VolumeOff
-import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -88,6 +88,17 @@ import com.example.data.model.ChatMessage
 import com.example.data.model.ChildProfile
 import com.example.data.model.DailyMission
 import com.example.ui.components.AnimatedCharacter
+import com.example.ui.components.AvailableCompanionPersonas
+import com.example.ui.components.CharacterEmotion
+import com.example.ui.components.CompanionPersona
+import com.example.ui.components.ConfettiCelebrationOverlay
+import com.example.ui.components.VirtualBadgeCabinet
+import com.example.ui.components.QuickBadgeCabinetStrip
+import com.example.ui.components.BadgeDetailDialog
+import com.example.ui.components.BadgeMilestoneDef
+import com.example.ui.components.ALL_BADGE_MILESTONES
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import com.example.ui.theme.*
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -99,14 +110,17 @@ fun KidsMainScreen(
     val profile by viewModel.childProfile.collectAsState()
     val allBadges by viewModel.allBadges.collectAsState()
     val dailyMissions by viewModel.dailyMissions.collectAsState()
+    val celebrationEvent by viewModel.celebrationEvent.collectAsState()
 
     var activeTab by remember { mutableStateOf("chat") }
     var showParentGate by remember { mutableStateOf(false) }
+    var selectedMilestone by remember { mutableStateOf<Triple<BadgeMilestoneDef, Boolean, Badge?>?>(null) }
 
     val localProfile = profile ?: ChildProfile(name = "Learner", age = 6, interests = "Stories")
 
-    Scaffold(
-        topBar = {
+    Box(modifier = Modifier.fillMaxSize()) {
+        Scaffold(
+            topBar = {
             TopAppBar(
                 title = {
                     Row(
@@ -167,7 +181,24 @@ fun KidsMainScreen(
                         )
                     }
 
-                    Spacer(modifier = Modifier.width(8.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+
+                    // Virtual Badge Cabinet Quick-Access Button from Main Interface
+                    IconButton(
+                        onClick = { activeTab = "badges" },
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .background(Color(0xFFFFD54F).copy(alpha = 0.2f))
+                            .testTag("top_bar_badge_cabinet_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.EmojiEvents,
+                            contentDescription = "Open Badge Cabinet",
+                            tint = Color(0xFFD97706)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.width(6.dp))
 
                     // Parent Dashboard Secure Entrance Button
                     IconButton(
@@ -209,7 +240,7 @@ fun KidsMainScreen(
                 NavigationBarItem(
                     selected = activeTab == "stories",
                     onClick = { activeTab = "stories" },
-                    icon = { Icon(imageVector = Icons.Default.MenuBook, contentDescription = "AI Stories") },
+                    icon = { Icon(imageVector = Icons.AutoMirrored.Filled.MenuBook, contentDescription = "AI Stories") },
                     label = { Text("Stories", fontSize = 12.sp, fontWeight = FontWeight.Bold) },
                     colors = NavigationBarItemDefaults.colors(
                         selectedIconColor = MaterialTheme.colorScheme.primary,
@@ -252,10 +283,33 @@ fun KidsMainScreen(
                 .padding(padding)
         ) {
             when (activeTab) {
-                "chat" -> ChatTab(viewModel, localProfile)
+                "chat" -> ChatTab(viewModel, localProfile, onOpenBadgeCabinet = { activeTab = "badges" })
                 "stories" -> StoriesTab(viewModel, localProfile)
                 "games" -> GamesTab(viewModel, localProfile, dailyMissions)
-                "badges" -> BadgesTab(localProfile, allBadges)
+                "badges" -> VirtualBadgeCabinet(
+                    profile = localProfile,
+                    unlockedBadges = allBadges,
+                    onBadgeSelected = { milestone, isUnlocked, badge ->
+                        selectedMilestone = Triple(milestone, isUnlocked, badge)
+                    }
+                )
+            }
+
+            // Badge Detail Dialog
+            selectedMilestone?.let { (milestone, isUnlocked, badge) ->
+                BadgeDetailDialog(
+                    milestone = milestone,
+                    isUnlocked = isUnlocked,
+                    unlockedBadge = badge,
+                    onDismiss = { selectedMilestone = null },
+                    onCelebrateAgain = {
+                        viewModel.triggerCelebration(
+                            title = "${milestone.title}! 🏆",
+                            message = milestone.description,
+                            xpBonus = 15
+                        )
+                    }
+                )
             }
 
             // Secure Parent Gate Challenge Dialog
@@ -270,6 +324,18 @@ fun KidsMainScreen(
             }
         }
     }
+
+    // Particle-Based Confetti Animation Overlay on Lesson Completion & Milestone
+    celebrationEvent?.let { event ->
+        ConfettiCelebrationOverlay(
+            visible = true,
+            title = event.title,
+            message = event.message,
+            xpBonus = event.xpBonus,
+            onDismiss = { viewModel.dismissCelebration() }
+        )
+    }
+}
 }
 
 // --- SECURE COPPA-FRIENDLY PARENT GATE CHALLENGE ---
@@ -354,18 +420,33 @@ fun ParentGateChallengeDialog(onDismiss: () -> Unit, onSuccess: () -> Unit) {
 // --- TAB 1: AI TEACHER COMPANION CHAT ---
 
 @Composable
-fun ChatTab(viewModel: com.example.ui.viewmodel.LearningViewModel, profile: ChildProfile) {
+fun ChatTab(
+    viewModel: com.example.ui.viewmodel.LearningViewModel,
+    profile: ChildProfile,
+    onOpenBadgeCabinet: () -> Unit = {}
+) {
     val messages by viewModel.chatMessages.collectAsState()
     val isSpeaking by viewModel.isSpeaking.collectAsState()
     val isListening by viewModel.isListening.collectAsState()
     val isAILoading by viewModel.isAILoading.collectAsState()
     val sttText by viewModel.sttText.collectAsState()
+    val companionPersona by viewModel.companionPersona.collectAsState()
+    val characterEmotion by viewModel.characterEmotion.collectAsState()
+    val allBadges by viewModel.allBadges.collectAsState()
 
     var keyboardInput by remember { mutableStateOf("") }
     var useVoiceMode by remember { mutableStateOf(true) }
+    var showPersonaDialog by remember { mutableStateOf(false) }
 
     val lazyListState = rememberLazyListState()
     val context = LocalContext.current
+
+    // Automatically greet the child if the conversation is new
+    LaunchedEffect(Unit) {
+        if (messages.isEmpty()) {
+            viewModel.greetChild()
+        }
+    }
 
     // STT Audio Permission Handler
     val recordAudioPermissionLauncher = rememberLauncherForActivityResult(
@@ -386,57 +467,109 @@ fun ChatTab(viewModel: com.example.ui.viewmodel.LearningViewModel, profile: Chil
         modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.SpaceBetween
     ) {
-        // Visual Hero: Animated Companion Character (Buddy, Captain Curie, Spark, or Atlas)
+        // Visual Hero: Interactive Animated AI Companion Character
         Card(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 8.dp),
+                .padding(horizontal = 16.dp, vertical = 6.dp),
             shape = RoundedCornerShape(24.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f)),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
             elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
         ) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(16.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
+                    .padding(14.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                // Bobbing vector Canvas animation
-                AnimatedCharacter(
-                    isSpeaking = isSpeaking,
-                    isListening = isListening,
-                    ageGroup = profile.getAgeGroup(),
-                    modifier = Modifier.size(110.dp)
-                )
-
-                Column(
-                    modifier = Modifier
-                        .weight(1f)
-                        .padding(start = 12.dp)
+                // Interactive animated vector companion that reacts visually to speech, thinking, and touch
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier.testTag("interactive_companion_character")
                 ) {
-                    val characterName = when (profile.getAgeGroup()) {
-                        "3-5" -> "Buddy the Puppy 🐶"
-                        "6-8" -> "Captain Curie 🚀"
-                        "9-11" -> "Professor Spark ⚡"
-                        else -> "Atlas the Mentor 🪐"
+                    AnimatedCharacter(
+                        persona = companionPersona,
+                        emotion = characterEmotion,
+                        isSpeaking = isSpeaking,
+                        isListening = isListening,
+                        onClick = { viewModel.onCharacterTapped() },
+                        modifier = Modifier.size(110.dp)
+                    )
+                }
+
+                Spacer(modifier = Modifier.width(12.dp))
+
+                Column(modifier = Modifier.weight(1f)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = companionPersona.displayName,
+                            fontWeight = FontWeight.ExtraBold,
+                            fontSize = 17.sp,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+
+                        // Change companion persona button
+                        IconButton(
+                            onClick = { showPersonaDialog = true },
+                            modifier = Modifier
+                                .size(32.dp)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f))
+                                .testTag("switch_companion_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.AutoAwesome,
+                                contentDescription = "Change Companion",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
                     }
+
                     Text(
-                        text = characterName,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 18.sp,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = if (isListening) "Listening carefully..." else if (isSpeaking) "Talking to you out loud!" else "Ready to play! Tap mic or type!",
-                        fontSize = 13.sp,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                        text = companionPersona.subtitle,
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
                     )
 
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(6.dp))
 
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    // Dynamic Emotion Badge
+                    val (emotionText, emotionColor) = when (characterEmotion) {
+                        CharacterEmotion.HAPPY -> "🌟 Happy & Friendly" to BubbleGreen
+                        CharacterEmotion.CURIOUS -> "🔍 Curious Explorer" to BubbleOrange
+                        CharacterEmotion.THINKING -> "💭 Thinking Deeply..." to BubblePurple
+                        CharacterEmotion.ENCOURAGING -> "💖 Cheering You On!" to BubblePink
+                        CharacterEmotion.CELEBRATING -> "🎉 Celebrating Progress!" to BubbleYellow
+                        CharacterEmotion.TALKING -> "🗣️ Talking Aloud" to MaterialTheme.colorScheme.primary
+                        CharacterEmotion.LISTENING -> "👂 Listening Carefully" to BubbleCyan
+                    }
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(emotionColor.copy(alpha = 0.15f))
+                            .padding(horizontal = 8.dp, vertical = 3.dp)
+                    ) {
+                        Text(
+                            text = emotionText,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
                         IconButton(
                             onClick = {
                                 if (isSpeaking) {
@@ -448,21 +581,75 @@ fun ChatTab(viewModel: com.example.ui.viewmodel.LearningViewModel, profile: Chil
                                 }
                             },
                             modifier = Modifier
-                                .size(36.dp)
+                                .size(32.dp)
                                 .clip(CircleShape)
                                 .background(MaterialTheme.colorScheme.secondary.copy(alpha = 0.1f))
+                                .testTag("toggle_speech_audio")
                         ) {
                             Icon(
-                                imageVector = if (isSpeaking) Icons.Default.VolumeOff else Icons.Default.VolumeUp,
+                                imageVector = if (isSpeaking) Icons.AutoMirrored.Filled.VolumeOff else Icons.AutoMirrored.Filled.VolumeUp,
                                 contentDescription = "Mute/Unmute",
                                 tint = MaterialTheme.colorScheme.secondary,
-                                modifier = Modifier.size(18.dp)
+                                modifier = Modifier.size(16.dp)
                             )
                         }
+
+                        Text(
+                            text = "👈 Tap me to tickle!",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
+                        )
                     }
                 }
             }
         }
+
+        // Quick Topic & Learning Action Chips for Child Engagement
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            LearningActionChip(
+                label = "💡 Give Me a Hint",
+                color = BubbleYellow,
+                onClick = { viewModel.askForHint() }
+            )
+            LearningActionChip(
+                label = "🧩 Fun Riddle",
+                color = BubblePurple,
+                onClick = { viewModel.askRiddle() }
+            )
+            LearningActionChip(
+                label = "😄 Tell a Joke",
+                color = BubbleOrange,
+                onClick = { viewModel.askJoke() }
+            )
+            LearningActionChip(
+                label = "🐘 Amazing Animals",
+                color = BubbleGreen,
+                onClick = { viewModel.startTopic("I want to learn about animals!") }
+            )
+            LearningActionChip(
+                label = "🚀 Space Adventure",
+                color = BubbleCyan,
+                onClick = { viewModel.startTopic("Tell me something exciting about outer space!") }
+            )
+            LearningActionChip(
+                label = "🔢 Math Puzzle",
+                color = BubblePink,
+                onClick = { viewModel.startTopic("Can you give me a fun math puzzle?") }
+            )
+        }
+
+        // Quick Badge Cabinet Strip in Main Interface
+        QuickBadgeCabinetStrip(
+            unlockedBadges = allBadges,
+            onOpenCabinet = onOpenBadgeCabinet,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+        )
 
         // Chat Bubble Logs Area
         LazyColumn(
@@ -501,7 +688,7 @@ fun ChatTab(viewModel: com.example.ui.viewmodel.LearningViewModel, profile: Chil
                     }
                     Spacer(modifier = Modifier.height(2.dp))
                     Text(
-                        text = if (isAI) "AI Teacher" else profile.name,
+                        text = if (isAI) companionPersona.displayName else profile.name,
                         fontSize = 11.sp,
                         color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.5f)
                     )
@@ -517,7 +704,11 @@ fun ChatTab(viewModel: com.example.ui.viewmodel.LearningViewModel, profile: Chil
                     ) {
                         CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("Thinking...", fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
+                        Text(
+                            text = "${companionPersona.displayName} is thinking...",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.primary
+                        )
                     }
                 }
             }
@@ -642,6 +833,131 @@ fun ChatTab(viewModel: com.example.ui.viewmodel.LearningViewModel, profile: Chil
                 }
             }
         }
+
+        // Companion Persona Picker Dialog
+        if (showPersonaDialog) {
+            CompanionPersonaPickerDialog(
+                currentPersonaId = companionPersona.id,
+                onSelectPersona = { newPersonaId ->
+                    viewModel.setCompanionPersona(newPersonaId)
+                    viewModel.greetChild()
+                    showPersonaDialog = false
+                },
+                onDismiss = { showPersonaDialog = false }
+            )
+        }
+    }
+}
+
+// --- COMPANION SELECTION DIALOG & QUICK ACTION CHIPS ---
+
+@Composable
+fun CompanionPersonaPickerDialog(
+    currentPersonaId: String,
+    onSelectPersona: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                text = "Choose Your Learning Companion! 🌟",
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary,
+                fontSize = 18.sp
+            )
+        },
+        text = {
+            Column(
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    text = "Pick a friendly learning partner to talk, laugh, and explore with:",
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                AvailableCompanionPersonas.forEach { persona ->
+                    val isSelected = persona.id == currentPersonaId
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onSelectPersona(persona.id) },
+                        shape = RoundedCornerShape(16.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
+                            else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                        ),
+                        border = if (isSelected) androidx.compose.foundation.BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else null
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            AnimatedCharacter(
+                                persona = persona,
+                                emotion = CharacterEmotion.HAPPY,
+                                isSpeaking = false,
+                                modifier = Modifier.size(56.dp)
+                            )
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = persona.displayName,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 15.sp,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Text(
+                                    text = persona.subtitle,
+                                    fontSize = 12.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            if (isSelected) {
+                                Icon(
+                                    imageVector = Icons.Default.CheckCircle,
+                                    contentDescription = "Selected",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Done", fontWeight = FontWeight.Bold)
+            }
+        }
+    )
+}
+
+@Composable
+fun LearningActionChip(
+    label: String,
+    color: Color,
+    onClick: () -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .clip(RoundedCornerShape(14.dp))
+            .clickable(onClick = onClick),
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(containerColor = color.copy(alpha = 0.18f))
+    ) {
+        Text(
+            text = label,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp)
+        )
     }
 }
 
@@ -771,6 +1087,32 @@ fun StoriesTab(viewModel: com.example.ui.viewmodel.LearningViewModel, profile: C
                                                 fontSize = 13.sp,
                                                 color = MaterialTheme.colorScheme.onSurface
                                             )
+                                            Spacer(modifier = Modifier.height(8.dp))
+                                            Button(
+                                                onClick = {
+                                                    viewModel.triggerCelebration(
+                                                        title = "Story Lesson Completed! 📖",
+                                                        message = "You completed the story moral lesson and earned +25 XP!",
+                                                        xpBonus = 25
+                                                    )
+                                                    viewModel.addXp(25)
+                                                },
+                                                shape = RoundedCornerShape(8.dp),
+                                                colors = ButtonDefaults.buttonColors(
+                                                    containerColor = MaterialTheme.colorScheme.primary
+                                                ),
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .testTag("complete_story_lesson_button")
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.AutoAwesome,
+                                                    contentDescription = null,
+                                                    modifier = Modifier.size(16.dp)
+                                                )
+                                                Spacer(modifier = Modifier.width(6.dp))
+                                                Text("Mark Moral Lesson Completed! 🎉", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                            }
                                         }
                                     }
                                 }
@@ -1123,7 +1465,11 @@ fun GamesTab(
 // --- TAB 4: ACHIEVEMENTS & BADGES ---
 
 @Composable
-fun BadgesTab(profile: ChildProfile, badges: List<Badge>) {
+fun BadgesTab(
+    profile: ChildProfile,
+    badges: List<Badge>,
+    onBadgeClick: ((Badge) -> Unit)? = null
+) {
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
@@ -1227,7 +1573,10 @@ fun BadgesTab(profile: ChildProfile, badges: List<Badge>) {
             items(badges) { badge ->
                 Card(
                     shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    modifier = Modifier
+                        .clickable { onBadgeClick?.invoke(badge) }
+                        .testTag("badge_card_${badge.id}")
                 ) {
                     Row(
                         modifier = Modifier
